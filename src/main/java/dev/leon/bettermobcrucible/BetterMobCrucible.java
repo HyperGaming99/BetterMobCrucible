@@ -101,6 +101,14 @@ public final class BetterMobCrucible extends JavaPlugin implements Listener {
 
     /** Item-Dateien von BetterMob lesen, Skills als Pack in BetterMob ablegen und BetterMob bei Aenderung neu laden. */
     private void rebuild() {
+        startRebuild(null);
+    }
+
+    private void startRebuild(CommandSender sender) {
+        getServer().getAsyncScheduler().runNow(this, task -> load(sender));
+    }
+
+    private synchronized void load(CommandSender sender) {
         Map<String, Map<String, String>> dispatch = new HashMap<>();
         Map<String, List<TimerEntry>> timers = new HashMap<>();
         Set<String> triggers = new HashSet<>();
@@ -138,10 +146,20 @@ public final class BetterMobCrucible extends JavaPlugin implements Listener {
             }
         }
 
-        snapshot = new Snapshot(dispatch, timers, triggers, period);
-        scheduleTimer(period);
-        syncSkillPack(generated);
+        Snapshot loaded = new Snapshot(dispatch, timers, triggers, period);
+        boolean skillsChanged = syncSkillPack(generated);
         getLogger().info(registered + " Item-Trigger fuer " + items + " Items geladen.");
+        getServer().getGlobalRegionScheduler().run(this, task -> apply(loaded, skillsChanged, sender));
+    }
+
+    private void apply(Snapshot loaded, boolean skillsChanged, CommandSender sender) {
+        snapshot = loaded;
+        scheduleTimer(loaded.timerPeriod());
+        if (skillsChanged) {
+            api.reload();
+            getLogger().info("Item-Skills in BetterMob aktualisiert.");
+        }
+        if (sender != null) sender.sendMessage("BetterMobCrucible reloaded.");
     }
 
     private static int parseInterval(String raw) {
@@ -195,24 +213,18 @@ public final class BetterMobCrucible extends JavaPlugin implements Listener {
         return found;
     }
 
-    /**
-     * BetterMob kennt nur Skills aus Dateien, daher schreiben wir die Item-Skills in einen
-     * eigenen Pack (packs/BetterMobCrucible/skills/items.yml). Aendert sich der Inhalt,
-     * laden wir BetterMob neu.
-     */
-    private void syncSkillPack(YamlConfiguration generated) {
+    private boolean syncSkillPack(YamlConfiguration generated) {
         File target = new File(betterMob.getDataFolder(), "packs/" + PACK_NAME + "/skills/items.yml");
         String content = generated.saveToString();
         try {
-            if (target.isFile() && Files.readString(target.toPath()).equals(content)) return;
+            if (target.isFile() && Files.readString(target.toPath()).equals(content)) return false;
             target.getParentFile().mkdirs();
             Files.writeString(target.toPath(), content);
+            return true;
         } catch (IOException e) {
             getLogger().warning("Konnte " + target + " nicht schreiben: " + e.getMessage());
-            return;
+            return false;
         }
-        api.reload();
-        getLogger().info("Item-Skills in BetterMob aktualisiert.");
     }
 
     static String skillName(String itemId, String trigger) {
@@ -397,10 +409,7 @@ public final class BetterMobCrucible extends JavaPlugin implements Listener {
                 sender.sendMessage("Item triggers: " + snapshot.dispatch());
                 sender.sendMessage("Timer skills: " + snapshot.timers());
             }
-            case "reload" -> {
-                rebuild();
-                sender.sendMessage("BetterMobCrucible reloaded.");
-            }
+            case "reload" -> startRebuild(sender);
             case "debug" -> debug(sender);
             default -> sender.sendMessage("/" + label + " <list|reload|debug>  (items: /bettermob give)");
         }
