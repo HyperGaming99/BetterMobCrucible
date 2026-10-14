@@ -22,6 +22,7 @@ import java.util.stream.Stream;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.TextDecoration;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
+import org.bukkit.Bukkit;
 import org.bukkit.NamespacedKey;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
@@ -329,7 +330,7 @@ public final class BetterMobCrucible extends JavaPlugin implements Listener {
     }
 
     private static ItemStack mainHand(Entity entity) {
-        if (entity instanceof LivingEntity living && living.getEquipment() != null) {
+        if (entity instanceof LivingEntity living && Bukkit.isOwnedByCurrentRegion(living) && living.getEquipment() != null) {
             ItemStack held = living.getEquipment().getItemInMainHand();
             return held.getType().isAir() ? null : held;
         }
