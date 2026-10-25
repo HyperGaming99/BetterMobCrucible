@@ -59,6 +59,7 @@ public final class BetterMobCrucible extends JavaPlugin implements Listener {
     private static final List<String> EXTRA_TRIGGERS = List.of("swing", "pressf", "equip", "pickup", "itempickup", "drop", "itemdrop", "timer");
     private static final String TIMER_TRIGGER = "timer";
     private static final LegacyComponentSerializer LEGACY = LegacyComponentSerializer.legacyAmpersand();
+    private static final Pattern BETTERMOB_NBT_INVALID = Pattern.compile("[^a-z0-9_.-]");
 
     private record TimerEntry(String skill, int interval) {}
 
@@ -70,6 +71,7 @@ public final class BetterMobCrucible extends JavaPlugin implements Listener {
 
     private final Map<String, NamespacedKey> nbtKeys = new ConcurrentHashMap<>();
     private volatile Snapshot snapshot = Snapshot.EMPTY;
+    private volatile boolean betterMobItemNbt;
     private volatile Set<String> ownTriggers = Set.copyOf(EXTRA_TRIGGERS);
     private ScheduledTask timerTask;
     private long tick;
@@ -84,7 +86,7 @@ public final class BetterMobCrucible extends JavaPlugin implements Listener {
 
         api = BetterMobAPI.get();
         itemKey = new NamespacedKey(betterMob, "item_id");
-        api.registerMechanic(this, "setitemnbt", this::setItemNbt);
+        betterMobItemNbt = !api.registerMechanic(this, "setitemnbt", this::setItemNbt);
         api.registerMechanic(this, "setlore", this::setLore);
         registerTriggers();
         try {
@@ -115,6 +117,11 @@ public final class BetterMobCrucible extends JavaPlugin implements Listener {
 
     NamespacedKey nbtKey(String key) {
         return nbtKeys.computeIfAbsent(key.toLowerCase(Locale.ROOT), k -> new NamespacedKey(this, "nbt/" + k));
+    }
+
+    static NamespacedKey betterMobNbtKey(String key) {
+        String clean = BETTERMOB_NBT_INVALID.matcher(key.trim().toLowerCase(Locale.ROOT)).replaceAll("_");
+        return clean.isEmpty() ? null : NamespacedKey.fromString("bettermob:nbt_" + clean);
     }
 
     // ---- Laden ------------------------------------------------------------------------
@@ -416,7 +423,13 @@ public final class BetterMobCrucible extends JavaPlugin implements Listener {
     private String nbtOf(LivingEntity entity, String key) {
         ItemStack held = mainHand(entity);
         if (entity == null || held == null || key == null || key.isEmpty() || !held.hasItemMeta()) return "";
-        String value = held.getItemMeta().getPersistentDataContainer().get(nbtKey(key), PersistentDataType.STRING);
+        PersistentDataContainer pdc = held.getItemMeta().getPersistentDataContainer();
+        String value = null;
+        if (betterMobItemNbt) {
+            NamespacedKey shared = betterMobNbtKey(key);
+            if (shared != null) value = pdc.get(shared, PersistentDataType.STRING);
+        }
+        if (value == null) value = pdc.get(nbtKey(key), PersistentDataType.STRING);
         return value == null ? "" : value;
     }
 
@@ -464,7 +477,9 @@ public final class BetterMobCrucible extends JavaPlugin implements Listener {
         if (held.hasItemMeta()) {
             PersistentDataContainer pdc = held.getItemMeta().getPersistentDataContainer();
             for (NamespacedKey key : pdc.getKeys()) {
-                if (key.getNamespace().equals(getName().toLowerCase(Locale.ROOT)) && key.getKey().startsWith("nbt/")) {
+                boolean own = key.getNamespace().equals(getName().toLowerCase(Locale.ROOT)) && key.getKey().startsWith("nbt/");
+                boolean shared = key.getNamespace().equals("bettermob") && key.getKey().startsWith("nbt_");
+                if (own || shared) {
                     sender.sendMessage("  " + key.getKey().substring(4) + " = " + pdc.get(key, PersistentDataType.STRING));
                 }
             }
